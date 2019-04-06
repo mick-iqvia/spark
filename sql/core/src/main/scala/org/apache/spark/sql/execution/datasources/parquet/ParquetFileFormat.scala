@@ -333,9 +333,7 @@ class ParquetFileFormat
     val resultSchema = StructType(partitionSchema.fields ++ requiredSchema.fields)
     val sqlConf = sparkSession.sessionState.conf
     val enableOffHeapColumnVector = sqlConf.offHeapColumnVectorEnabled
-    val enableVectorizedReader: Boolean =
-      sqlConf.parquetVectorizedReaderEnabled &&
-      resultSchema.forall(_.dataType.isInstanceOf[AtomicType])
+    val enableVectorizedReader: Boolean = useVectorizedReader(resultSchema, sqlConf)
     val enableRecordFilter: Boolean = sqlConf.parquetRecordFilterEnabled
     val timestampConversion: Boolean = sqlConf.isParquetINT96TimestampConversion
     val capacity = sqlConf.parquetVectorizedReaderBatchSize
@@ -451,6 +449,25 @@ class ParquetFileFormat
         }
       }
     }
+  }
+
+  private def useVectorizedReader(resultSchema: StructType, sqlConf: SQLConf) = {
+    val result = sqlConf.parquetVectorizedReaderEnabled &&
+      resultSchema.forall { _.dataType match {
+        case _: AtomicType => true
+        case ArrayType(IntegerType, _) |
+             ArrayType(LongType, _) |
+             ArrayType(FloatType, _) |
+             ArrayType(DoubleType, _) |
+             ArrayType(DateType, _) |
+             ArrayType(TimestampType, _) |
+             ArrayType(StringType, _) => true
+        case _ => false
+      }
+
+      }
+    if (result) log.info(s"Using vectorized reader for: $resultSchema")
+    result
   }
 
   override def supportDataType(dataType: DataType): Boolean = dataType match {

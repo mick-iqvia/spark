@@ -526,6 +526,32 @@ public final class OffHeapColumnVector extends WritableColumnVector {
     return result;
   }
 
+
+  // APIs dealing with Nested Arrays
+  @Override
+  public void syncArrayMeta(WritableColumnVector other, int endRowId) {
+    OffHeapColumnVector otherOffHeapColumnVector = (OffHeapColumnVector) other;
+    for (int i = 0; i < endRowId; i++) {
+      Platform.putInt(null, offsetData + 4L * i, Platform.getInt(null, otherOffHeapColumnVector.offsetData + 4L * i));
+      Platform.putInt(null, lengthData + 4L * i, Platform.getInt(null, otherOffHeapColumnVector.lengthData + 4L * i));
+    }
+  }
+
+  @Override
+  public void setArrayOffset(int rowId, int offset) {
+    Platform.putInt(null, offsetData + 4L * rowId, offset);
+  }
+
+  @Override
+  public void calculateArrayLengths(int startRowId, int endRowId, int endOffSet) {
+    for (int i = startRowId; i < endRowId; ++i) {
+      int len = getArrayOffset(i+1) - getArrayOffset(i);
+      Platform.putInt(null, lengthData + 4L * i, len);
+    }
+    Platform.putInt(null, lengthData + 4L * endRowId,  endOffSet - getArrayOffset(endRowId));
+  }
+
+
   // Split out the slow path.
   @Override
   protected void reserveInternal(int newCapacity) {

@@ -17,9 +17,10 @@
 
 package org.apache.spark.sql.execution.datasources.parquet;
 
+import org.apache.parquet.io.api.Binary;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 
-import org.apache.parquet.io.api.Binary;
+import java.util.TimeZone;
 
 /**
  * Interface for value decoding that supports vectorized (aka batched) decoding.
@@ -44,4 +45,11 @@ public interface VectorizedValuesReader {
   void readFloats(int total, WritableColumnVector c, int rowId);
   void readDoubles(int total, WritableColumnVector c, int rowId);
   void readBinary(int total, WritableColumnVector c, int rowId);
+
+  void readIntArray(int total, WritableColumnVector c);
+  void readLongArray(int total, WritableColumnVector c);
+  void readTimestampArray(int total, WritableColumnVector c, TimeZone convertTz);
+  void readFloatArray(int total, WritableColumnVector c);
+  void readDoubleArray(int total, WritableColumnVector c);
+  void readBinaryArray(int total, WritableColumnVector c);
 }

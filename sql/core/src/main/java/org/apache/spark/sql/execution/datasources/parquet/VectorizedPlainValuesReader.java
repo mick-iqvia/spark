@@ -16,21 +16,23 @@
  */
 package org.apache.spark.sql.execution.datasources.parquet;
 
+import org.apache.parquet.bytes.ByteBufferInputStream;
+import org.apache.parquet.column.values.ValuesReader;
+import org.apache.parquet.io.ParquetDecodingException;
+import org.apache.parquet.io.api.Binary;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
+import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-
-import org.apache.parquet.bytes.ByteBufferInputStream;
-import org.apache.parquet.io.ParquetDecodingException;
-import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
-
-import org.apache.parquet.column.values.ValuesReader;
-import org.apache.parquet.io.api.Binary;
+import java.util.TimeZone;
 
 /**
  * An implementation of the Parquet PLAIN decoder that supports the vectorized interface.
  */
 public class VectorizedPlainValuesReader extends ValuesReader implements VectorizedValuesReader {
+  private static final TimeZone UTC = DateTimeUtils.TimeZoneUTC();
   private ByteBufferInputStream in = null;
 
   // Only used for booleans.
@@ -80,6 +82,95 @@ public class VectorizedPlainValuesReader extends ValuesReader implements Vectori
       }
     }
   }
+
+
+  @Override
+  public final void readIntArray(int total, WritableColumnVector c) {
+    int requiredBytes = total * 4;
+    ByteBuffer buffer = getBuffer(requiredBytes);
+    if (buffer.hasArray()) {
+      int offset = buffer.arrayOffset() + buffer.position();
+      c.arrayData().appendInts(total, buffer.array(), offset);
+    } else {
+      for (int i = 0; i < total; i += 1) {
+        c.arrayData().appendInt(buffer.getInt());
+      }
+    }
+  }
+
+
+  @Override
+  public final void readLongArray(int total, WritableColumnVector c) {
+    int requiredBytes = total * 8;
+    ByteBuffer buffer = getBuffer(requiredBytes);
+    if (buffer.hasArray()) {
+      int offset = buffer.arrayOffset() + buffer.position();
+      c.arrayData().appendLongs(total, buffer.array(), offset);
+    } else {
+      for (int i = 0; i < total; i += 1) {
+        c.arrayData().appendLong(buffer.getLong());
+      }
+    }
+  }
+
+  @Override
+  public final void readTimestampArray(int total, WritableColumnVector c, TimeZone convertTz) {
+    for (int i = 0; i < total; i += 1) {
+      Binary binary = readBinary(12);
+      long rawTime = ParquetRowConverter.binaryToSQLTimestamp(binary);
+      if (convertTz != null && !convertTz.equals(UTC)) {
+        long adjTime = DateTimeUtils.convertTz(rawTime, convertTz, UTC);
+        c.arrayData().appendLong(adjTime);
+      } else {
+        c.arrayData().appendLong(rawTime);
+      }
+    }
+  }
+
+  @Override
+  public final void readFloatArray(int total, WritableColumnVector c) {
+    int requiredBytes = total * 4;
+    ByteBuffer buffer = getBuffer(requiredBytes);
+    if (buffer.hasArray()) {
+      int offset = buffer.arrayOffset() + buffer.position();
+      c.arrayData().appendFloats(total, buffer.array(), offset);
+    } else {
+      for (int i = 0; i < total; i += 1) {
+        c.arrayData().appendFloat(buffer.getFloat());
+      }
+    }
+  }
+
+
+  @Override
+  public final void readDoubleArray(int total, WritableColumnVector c) {
+    int requiredBytes = total * 8;
+    ByteBuffer buffer = getBuffer(requiredBytes);
+    if (buffer.hasArray()) {
+      int offset = buffer.arrayOffset() + buffer.position();
+      c.arrayData().appendDoubles(total, buffer.array(), offset);
+    } else {
+      for (int i = 0; i < total; i += 1) {
+        c.arrayData().appendDouble(buffer.getDouble());
+      }
+    }
+  }
+
+  @Override
+  public final void readBinaryArray(int total, WritableColumnVector c) {
+    for (int i = 0; i < total; i++) {
+      int len = readInteger();
+      ByteBuffer buffer = getBuffer(len);
+      if (buffer.hasArray()) {
+        c.arrayData().appendByteArray(buffer.array(), buffer.arrayOffset() + buffer.position(), len);
+      } else {
+        byte[] bytes = new byte[len];
+        buffer.get(bytes);
+        c.arrayData().appendByteArray(bytes, 0, len);
+      }
+    }
+  }
+
 
   @Override
   public final void readLongs(int total, WritableColumnVector c, int rowId) {
@@ -204,7 +295,7 @@ public class VectorizedPlainValuesReader extends ValuesReader implements Vectori
     ByteBuffer buffer = getBuffer(len);
     if (buffer.hasArray()) {
       return Binary.fromConstantByteArray(
-          buffer.array(), buffer.arrayOffset() + buffer.position(), len);
+              buffer.array(), buffer.arrayOffset() + buffer.position(), len);
     } else {
       byte[] bytes = new byte[len];
       buffer.get(bytes);

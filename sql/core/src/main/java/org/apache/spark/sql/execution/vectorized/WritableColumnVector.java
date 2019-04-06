@@ -18,9 +18,10 @@ package org.apache.spark.sql.execution.vectorized;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.TimeZone;
 
 import com.google.common.annotations.VisibleForTesting;
-
+import org.apache.spark.sql.execution.vectorized.array.DictionaryColumnVectorFacade;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.sql.vectorized.ColumnVector;
@@ -62,6 +63,7 @@ public abstract class WritableColumnVector extends ColumnVector {
       putNotNulls(0, capacity);
       numNulls = 0;
     }
+    setDictionary(null);
   }
 
   @Override
@@ -164,7 +166,9 @@ public abstract class WritableColumnVector extends ColumnVector {
    */
   public WritableColumnVector reserveDictionaryIds(int capacity) {
     if (dictionaryIds == null) {
-      dictionaryIds = reserveNewColumn(capacity, DataTypes.IntegerType);
+      // support for array types
+      if (type instanceof ArrayType) dictionaryIds = reserveNewColumn(capacity, new ArrayType(DataTypes.IntegerType, ((ArrayType)type).containsNull()));
+      else dictionaryIds = reserveNewColumn(capacity, DataTypes.IntegerType);
     } else {
       dictionaryIds.reset();
       dictionaryIds.reserve(capacity);
@@ -332,6 +336,11 @@ public abstract class WritableColumnVector extends ColumnVector {
    */
   public abstract void putDoubles(int rowId, int count, byte[] src, int srcIndex);
 
+
+  public abstract void syncArrayMeta(WritableColumnVector other, int endRowId);
+  public abstract void setArrayOffset(int rowId, int offset);
+  public abstract void calculateArrayLengths(int startRowId, int endRowId, int endOffSet);
+
   /**
    * Puts a byte array that already exists in this column.
    */
@@ -400,6 +409,9 @@ public abstract class WritableColumnVector extends ColumnVector {
     }
   }
 
+  public final void setElementsAppended(int elementsAppended) {
+    this.elementsAppended = elementsAppended;
+  }
   /**
    * Append APIs. These APIs all behave similarly and will append data to the current vector.  It
    * is not valid to mix the put and append APIs. The append APIs are slower and should only be
@@ -517,6 +529,14 @@ public abstract class WritableColumnVector extends ColumnVector {
     return result;
   }
 
+  public final int appendInts(int length, byte[] src, int srcOffset) {
+    reserve(elementsAppended + length);
+    int result = elementsAppended;
+    putInts(elementsAppended, length, src, srcOffset);
+    elementsAppended += length;
+    return result;
+  }
+
   public final int appendLong(long v) {
     reserve(elementsAppended + 1);
     putLong(elementsAppended, v);
@@ -535,6 +555,14 @@ public abstract class WritableColumnVector extends ColumnVector {
     reserve(elementsAppended + length);
     int result = elementsAppended;
     putLongs(elementsAppended, length, src, offset);
+    elementsAppended += length;
+    return result;
+  }
+
+  public final int appendLongs(int length, byte[] src, int srcIndex) {
+    reserve(elementsAppended + length);
+    int result = elementsAppended;
+    putLongs(elementsAppended, length, src, srcIndex);
     elementsAppended += length;
     return result;
   }
@@ -561,6 +589,15 @@ public abstract class WritableColumnVector extends ColumnVector {
     return result;
   }
 
+  public final int appendFloats(int length, byte[] src, int srcIndex) {
+    reserve(elementsAppended + length);
+    int result = elementsAppended;
+    putFloats(elementsAppended, length, src, srcIndex);
+    elementsAppended += length;
+    return result;
+  }
+
+
   public final int appendDouble(double v) {
     reserve(elementsAppended + 1);
     putDouble(elementsAppended, v);
@@ -582,6 +619,15 @@ public abstract class WritableColumnVector extends ColumnVector {
     elementsAppended += length;
     return result;
   }
+
+  public final int appendDoubles(int length, byte[] src, int srcIndex) {
+    reserve(elementsAppended + length);
+    int result = elementsAppended;
+    putDoubles(elementsAppended, length, src, srcIndex);
+    elementsAppended += length;
+    return result;
+  }
+
 
   public final int appendByteArray(byte[] value, int offset, int length) {
     int copiedOffset = arrayData().appendBytes(length, value, offset);
@@ -618,12 +664,18 @@ public abstract class WritableColumnVector extends ColumnVector {
     return elementsAppended;
   }
 
+
   // `WritableColumnVector` puts the data of array in the first child column vector, and puts the
   // array offsets and lengths in the current column vector.
   @Override
   public final ColumnarArray getArray(int rowId) {
     if (isNullAt(rowId)) return null;
-    return new ColumnarArray(arrayData(), getArrayOffset(rowId), getArrayLength(rowId));
+    if (dictionary == null) {
+      return new ColumnarArray(arrayData(), getArrayOffset(rowId), getArrayLength(rowId));
+    } else {
+      ColumnVector dictionaryArray = new DictionaryColumnVectorFacade(type, dictionaryIds.arrayData(), dictionary, convertTz);
+      return new ColumnarArray(dictionaryArray, dictionaryIds.getArrayOffset(rowId), dictionaryIds.getArrayLength(rowId));
+    }
   }
 
   // `WritableColumnVector` puts the key array in the first child column vector, value array in the
@@ -682,6 +734,9 @@ public abstract class WritableColumnVector extends ColumnVector {
    */
   protected static final int DEFAULT_ARRAY_LENGTH = 4;
 
+  /** An estimate for nested array size - TODO verify */
+  protected static final int DEFAULT_NESTED_ARRAY_LENGTH = 64;
+
   /**
    * Current write cursor (row index) when appending data.
    */
@@ -692,6 +747,15 @@ public abstract class WritableColumnVector extends ColumnVector {
    */
   protected WritableColumnVector[] childColumns;
 
+
+  /**
+   * Used for lazy timestamp conversion
+   */
+  private TimeZone convertTz;
+  public void setConversionTimeZone(TimeZone convertTz) {
+    this.convertTz = convertTz;
+  }
+
   /**
    * Reserve a new column.
    */
@@ -699,7 +763,7 @@ public abstract class WritableColumnVector extends ColumnVector {
 
   protected boolean isArray() {
     return type instanceof ArrayType || type instanceof BinaryType || type instanceof StringType ||
-      DecimalType.isByteArrayDecimalType(type);
+            DecimalType.isByteArrayDecimalType(type);
   }
 
   /**
@@ -715,6 +779,8 @@ public abstract class WritableColumnVector extends ColumnVector {
       int childCapacity = capacity;
       if (type instanceof ArrayType) {
         childType = ((ArrayType)type).elementType();
+        // set child capacity to average expected array size
+        childCapacity *= DEFAULT_NESTED_ARRAY_LENGTH;
       } else {
         childType = DataTypes.ByteType;
         childCapacity *= DEFAULT_ARRAY_LENGTH;

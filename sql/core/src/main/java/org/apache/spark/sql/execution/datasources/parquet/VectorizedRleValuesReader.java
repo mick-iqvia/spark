@@ -25,11 +25,11 @@ import org.apache.parquet.column.values.bitpacking.BytePacker;
 import org.apache.parquet.column.values.bitpacking.Packer;
 import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.io.api.Binary;
-
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.TimeZone;
 
 /**
  * A values reader for Parquet's run-length encoded data. This is based off of the version in
@@ -42,7 +42,7 @@ import java.nio.ByteBuffer;
  *  - Dictionary ids.
  */
 public final class VectorizedRleValuesReader extends ValuesReader
-    implements VectorizedValuesReader {
+        implements VectorizedValuesReader {
   // Current decoding mode. The encoded data contains groups of either run length encoded data
   // (RLE) or bit packed data. Each group contains a header that indicates which group it is and
   // the number of values in the group.
@@ -89,6 +89,31 @@ public final class VectorizedRleValuesReader extends ValuesReader
     this.fixedWidth = true;
     this.readLength = readLength;
     init(bitWidth);
+  }
+
+
+  public boolean isRle() {
+    return mode == MODE.RLE;
+  }
+
+  public int getCurrentCount() {
+    return currentCount;
+  }
+
+  public void adjustCurrentCount(int adj) {
+    currentCount += adj;
+  }
+
+  public int getCurrentValue() {
+    return currentValue;
+  }
+
+  public int getBufferValue() {
+    return currentBuffer[currentBufferIdx];
+  }
+
+  public void incrBufferIndex() {
+    currentBufferIdx++;
   }
 
   @Override
@@ -159,7 +184,7 @@ public final class VectorizedRleValuesReader extends ValuesReader
    * Reads `total` ints into `c` filling them in starting at `c[rowId]`. This reader
    * reads the definition levels and then will read from `data` for the non-null values.
    * If the value is null, c will be populated with `nullValue`. Note that `nullValue` is only
-   * necessary for readIntegers because we also use it to decode dictionaryIds and want to make
+   * necessary for readIntegers because we also use it to appendValue dictionaryIds and want to make
    * sure it always has a value in range.
    *
    * This is a batched version of this logic:
@@ -170,11 +195,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
    *  }
    */
   public void readIntegers(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -205,11 +230,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
 
   // TODO: can this code duplication be removed without a perf penalty?
   public void readBooleans(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -239,11 +264,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readBytes(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -273,11 +298,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readShorts(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -309,11 +334,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readLongs(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -343,11 +368,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readFloats(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -377,11 +402,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readDoubles(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -411,11 +436,11 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
   public void readBinarys(
-      int total,
-      WritableColumnVector c,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector c,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -449,12 +474,12 @@ public final class VectorizedRleValuesReader extends ValuesReader
    * populated into `nulls`.
    */
   public void readIntegers(
-      int total,
-      WritableColumnVector values,
-      WritableColumnVector nulls,
-      int rowId,
-      int level,
-      VectorizedValuesReader data) throws IOException {
+          int total,
+          WritableColumnVector values,
+          WritableColumnVector nulls,
+          int rowId,
+          int level,
+          VectorizedValuesReader data) throws IOException {
     int left = total;
     while (left > 0) {
       if (this.currentCount == 0) this.readNextGroup();
@@ -484,9 +509,9 @@ public final class VectorizedRleValuesReader extends ValuesReader
   }
 
 
-  // The RLE reader implements the vectorized decoding interface when used to decode dictionary
+  // The RLE reader implements the vectorized decoding interface when used to appendValue dictionary
   // IDs. This is different than the above APIs that decodes definitions levels along with values.
-  // Since this is only used to decode dictionary IDs, only decoding integers is supported.
+  // Since this is only used to appendValue dictionary IDs, only decoding integers is supported.
   @Override
   public void readIntegers(int total, WritableColumnVector c, int rowId) {
     int left = total;
@@ -507,6 +532,49 @@ public final class VectorizedRleValuesReader extends ValuesReader
       currentCount -= n;
     }
   }
+
+  @Override
+  public final void readIntArray(int total, WritableColumnVector c) {
+    int left = total;
+    while (left > 0) {
+      if (this.currentCount == 0) this.readNextGroup();
+      int n = Math.min(left, this.currentCount);
+      switch (mode) {
+        case RLE:
+          c.arrayData().appendInts(n, currentValue);
+          break;
+        case PACKED:
+          c.arrayData().appendInts(n, currentBuffer, currentBufferIdx);
+          currentBufferIdx += n;
+          break;
+      }
+      left -= n;
+      currentCount -= n;
+    }
+  }
+
+
+  @Override
+  public final void readLongArray(int total, WritableColumnVector c) {
+    throw new UnsupportedOperationException("only readIntArray is valid.");
+  }
+  @Override
+  public final void readTimestampArray(int total, WritableColumnVector c, TimeZone convertTz) {
+    throw new UnsupportedOperationException("only readIntArray is valid.");
+  }
+  @Override
+  public final void readFloatArray(int total, WritableColumnVector c) {
+    throw new UnsupportedOperationException("only readIntArray is valid.");
+  }
+  @Override
+  public final void readDoubleArray(int total, WritableColumnVector c) {
+    throw new UnsupportedOperationException("only readIntArray is valid.");
+  }
+  @Override
+  public final void readBinaryArray(int total, WritableColumnVector c) {
+    throw new UnsupportedOperationException("only readIntArray is valid.");
+  }
+
 
   @Override
   public byte readByte() {
@@ -608,7 +676,7 @@ public final class VectorizedRleValuesReader extends ValuesReader
   /**
    * Reads the next group.
    */
-  private void readNextGroup() {
+  public void readNextGroup() {
     try {
       int header = readUnsignedVarInt();
       this.mode = (header & 1) == 0 ? MODE.RLE : MODE.PACKED;

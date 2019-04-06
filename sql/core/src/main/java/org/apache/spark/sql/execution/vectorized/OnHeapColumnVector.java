@@ -500,6 +500,27 @@ public final class OnHeapColumnVector extends WritableColumnVector {
     return result;
   }
 
+  // APIs dealing with Nested Arrays
+  @Override public void syncArrayMeta(WritableColumnVector other, int endRowId) {
+    OnHeapColumnVector otherOnHeapColumnVector = (OnHeapColumnVector) other;
+    try {
+      System.arraycopy(otherOnHeapColumnVector.arrayOffsets, 0, arrayOffsets, 0, endRowId);
+      System.arraycopy(otherOnHeapColumnVector.arrayLengths, 0, arrayLengths, 0, endRowId);
+    } catch (NullPointerException e) {
+      throw new IllegalStateException("Values are " + otherOnHeapColumnVector.arrayOffsets + " " + arrayOffsets, e);
+    }
+  }
+  @Override public void setArrayOffset(int rowId, int offset) {
+    arrayOffsets[rowId] = offset;
+  }
+
+  @Override public void calculateArrayLengths(int startRowId, int endRowId, int endOffSet) {
+    for (int i = startRowId; i < endRowId; ++i) {
+      arrayLengths[i] = arrayOffsets[i+1] - arrayOffsets[i];
+    }
+    arrayLengths[endRowId] = endOffSet - arrayOffsets[endRowId];
+  }
+
   // Spilt this function out since it is the slow path.
   @Override
   protected void reserveInternal(int newCapacity) {
